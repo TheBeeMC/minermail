@@ -10,7 +10,7 @@ Client = discord.Client()
 
 client = commands.Bot(command_prefix = "?")
 
-chat_filter = ["FUCK", "CUNT", "BITCH", "DICK", "KYS", "FAGGOT", "FUCKING", "NIGGER", "NIGGA", "WHORE", "ASS", "KILL YOUR SELF", "IDIOT", "DUMBASS", "LOSER"]
+chat_filter = ["help"]
 bypass_list = []
 
 @client.event
@@ -29,7 +29,7 @@ async def on_message(message):
                                  
 @client.event
 async def on_ready():
-      await client.change_presence(game=discord.Game(name="& Mining ⛏"))
+      await client.change_presence(game=discord.Game(name="Message me for help!"))
         
         
         
