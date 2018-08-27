@@ -1,514 +1,223 @@
-'''
-MIT License
+#!/usr/bin/env python3
 
-Copyright (c) 2017 Kyb3r
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-'''
-
-GUILD_ID = 0 # your guild id here
+import asyncio
+import configparser
+import json
+import random
+import os
+from subprocess import check_output, CalledProcessError
+from sys import version_info
 
 import discord
-from discord.ext import commands
-from urllib.parse import urlparse
-import asyncio
-import textwrap
-import datetime
-import time
-import json
-import sys
-import os
-import re
-import string
-import traceback
-import io
-import inspect
-from contextlib import redirect_stdout
+
+version = '1.2.dev0'
+
+pyver = '{0[0]}.{0[1]}.{0[2]}'.format(version_info)
+if version_info[3] != 'final':
+    pyver += '{0[3][0]}{0[4]}'.format(version_info)
+
+try:
+    commit = check_output(['git', 'rev-parse', 'HEAD']).decode('ascii')[:-1]
+except CalledProcessError as e:
+    print('Checking for git commit failed: {} {}'.format(type(e).__name__, e))
+    commit = '<unknown>'
+
+try:
+    branch = check_output(['git', 'rev-parse', '--abbrev-ref', 'HEAD']).decode()[:-1]
+except CalledProcessError as e:
+    print('Checking for git branch failed: {} {}'.format(type(e).__name__, e))
+    branch = '<unknown>'
+
+print('Starting discord-mod-mail {}!'.format(version))
+
+client = discord.Client()
+
+config = configparser.ConfigParser()
+config.read('config.ini')
+
+client.already_ready = False
+
+client.last_id = 'uninitialized'
+
+# to be filled from ignored.json later
+ignored_users = []
+
+if os.path.isfile('ignored.json'):
+    with open('ignored.json', 'r') as f:
+        ignored_users = json.load(f)
+else:
+    with open('ignored.json', 'w') as f:
+        json.dump(ignored_users, f)
 
 
-class Modmail(commands.Bot):
-    def __init__(self):
-        super().__init__(command_prefix=self.get_pre)
-        self.uptime = datetime.datetime.utcnow()
-        self._add_commands()
+@client.event
+async def on_ready():
+    if client.already_ready:
+        return
+    client.channel = client.get_channel(config['Main']['channel_id'])
+    if not client.channel:
+        print('Channel with ID {} not found.'.format(config['Main']['channel_id']))
+        await client.close()
+    startup_message = '{0.user} is now ready. Version {1}, branch {2}, commit {3}, Python {4}'.format(
+        client, version, branch, commit[0:7], pyver)
+    await client.send_message(client.channel, startup_message)
+    print(startup_message)
+    await client.change_presence(game=discord.Game(name=config['Main']['playing']))
+    client.already_ready = True
 
-    def _add_commands(self):
-        '''Adds commands automatically'''
-        for attr in dir(self):
-            cmd = getattr(self, attr)
-            if isinstance(cmd, commands.Command):
-                self.add_command(cmd)
 
-    @property
-    def token(self):
-        '''Returns your token wherever it is'''
-        try:
-            with open('config.json') as f:
-                config = json.load(f)
-                if config.get('TOKEN') == "your_token_here":
-                    if not os.environ.get('TOKEN'):
-                        self.run_wizard()
-                else:
-                    token = config.get('TOKEN').strip('\"')
-        except FileNotFoundError:
-            token = None
-        return os.environ.get('TOKEN') or token
-    
-    @staticmethod
-    async def get_pre(bot, message):
-        '''Returns the prefix.'''
-        with open('config.json') as f:
-            prefix = json.load(f).get('PREFIX')
-        return os.environ.get('PREFIX') or prefix or 'm.'
+def gen_color(user_id):
+    random.seed(user_id)
+    c_r = random.randint(0, 255)
+    c_g = random.randint(0, 255)
+    c_b = random.randint(0, 255)
+    return discord.Color((c_r << 16) + (c_g << 8) + c_b)
 
-    @staticmethod
-    def run_wizard():
-        '''Wizard for first start'''
-        print('------------------------------------------')
-        token = input('Enter your token:\n> ')
-        print('------------------------------------------')
-        data = {
-                "TOKEN" : token,
-            }
-        with open('config.json','w') as f:
-            f.write(json.dumps(data, indent=4))
-        print('------------------------------------------')
-        print('Restarting...')
-        print('------------------------------------------')
-        os.execv(sys.executable, ['python'] + sys.argv)
 
-    @classmethod
-    def init(cls, token=None):
-        '''Starts the actual bot'''
-        bot = cls()
-        if token:
-            to_use = token.strip('"')
+anti_spam_check = {}
+
+anti_duplicate_replies = {}
+
+
+@client.event
+async def on_message(message):
+    author = message.author
+    if author == client.user:
+        return
+    if not client.already_ready:
+        return
+
+    if isinstance(message.channel, discord.PrivateChannel):
+        if author.id in ignored_users:
+            return
+        if author.id not in anti_spam_check:
+            anti_spam_check[author.id] = 0
+
+        anti_spam_check[author.id] += 1
+        if anti_spam_check[author.id] >= int(config['AntiSpam']['messages']):
+            if author.id not in ignored_users:  # prevent duplicates
+                ignored_users.append(author.id)
+            with open('ignored.json', 'w') as f:
+                json.dump(ignored_users, f)
+            await client.send_message(
+                client.channel, '{0.id} {0.mention} auto-ignored due to spam. Use `{1}unignore` to reverse.'.format(
+                    author, config['Main']['command_prefix']))
+            return
+
+        # for the purpose of nicknames, if anys
+        for server in client.servers:
+            member = server.get_member(author.id)
+            if member:
+                author = member
+            break
+
+        embed = discord.Embed(color=gen_color(int(author.id)), description=message.content)
+        if isinstance(author, discord.Member) and author.nick:
+            author_name = '{0.nick} ({0})'.format(author)
         else:
-            to_use = bot.token.strip('"')
-        try:
-            bot.run(to_use, activity=discord.Game(os.getenv('STATUS')), reconnect=True)
-        except Exception as e:
-            raise e
+            author_name = str(author)
+        embed.set_author(name=author_name, icon_url=author.avatar_url if author.avatar else author.default_avatar_url)
 
-    async def on_connect(self):
-        print('---------------')
-        print('Modmail connected!')
-        status = os.getenv('STATUS')
-        if status:
-            print(f'Setting Status to {status}')
-        else:
-            print('No status set.')
-
-    @property
-    def guild_id(self):
-        from_heroku = os.environ.get('GUILD_ID')
-        return int(from_heroku) if from_heroku else GUILD_ID
-
-    async def on_ready(self):
-        '''Bot startup, sets uptime.'''
-        self.guild = discord.utils.get(self.guilds, id=self.guild_id)
-        print(textwrap.dedent(f'''
-        ---------------
-        Client is ready!
-        ---------------
-        Author: Kyb3r#7220
-        ---------------
-        Logged in as: {self.user}
-        User ID: {self.user.id}
-        ---------------
-        '''))
-
-    def overwrites(self, ctx, modrole=None):
-        '''Permision overwrites for the guild.'''
-        overwrites = {
-            ctx.guild.default_role: discord.PermissionOverwrite(read_messages=False)
-        }
-
-        if modrole:
-            overwrites[modrole] = discord.PermissionOverwrite(read_messages=True)
-        else:
-            for role in self.guess_modroles(ctx):
-                overwrites[role] = discord.PermissionOverwrite(read_messages=True)
-
-        return overwrites
-
-    def help_embed(self, prefix):
-        em = discord.Embed(color=0x00FFFF)
-        em.set_author(name='Mod Mail - Help', icon_url=self.user.avatar_url)
-        em.description = 'This bot is a python implementation of a stateless "Mod Mail" bot. ' \
-                         'Made by Kyb3r and improved by the suggestions of others. This bot ' \
-                         'saves no data and utilises channel topics for storage and syncing.' 
-                 
-
-        cmds = f'`{prefix}setup [modrole] <- (optional)` - Command that sets up the bot.\n' \
-               f'`{prefix}reply <message...>` - Sends a message to the current thread\'s recipient.\n' \
-               f'`{prefix}close` - Closes the current thread and deletes the channel.\n' \
-               f'`{prefix}disable` - Closes all threads and disables modmail for the server.\n' \
-               f'`{prefix}customstatus` - Sets the Bot status to whatever you want.' \
-               f'`{prefix}block` - Blocks a user from using modmail!' \
-               f'`{prefix}unblock` - Unblocks a user from using modmail!'
-
-        warn = 'Do not manually delete the category or channels as it will break the system. ' \
-               'Modifying the channel topic will also break the system.'
-        em.add_field(name='Commands', value=cmds)
-        em.add_field(name='Warning', value=warn)
-        em.add_field(name='Github', value='https://github.com/verixx/modmail')
-        em.set_footer(text='Star the repository to unlock hidden features!')
-
-        return em
-
-    @commands.command()
-    @commands.has_permissions(administrator=True)
-    async def setup(self, ctx, *, modrole: discord.Role=None):
-        '''Sets up a server for modmail'''
-        if discord.utils.get(ctx.guild.categories, name='Mod Mail'):
-            return await ctx.send('This server is already set up.')
-
-        categ = await ctx.guild.create_category(
-            name='Mod Mail', 
-            overwrites=self.overwrites(ctx, modrole=modrole)
-            )
-        await categ.edit(position=0)
-        c = await ctx.guild.create_text_channel(name='bot-info', category=categ)
-        await c.edit(topic='Manually add user id\'s to block users.\n\n'
-                           'Blocked\n-------\n\n')
-        await c.send(embed=self.help_embed(ctx.prefix))
-        await ctx.send('Successfully set up server.')
-
-    @commands.command()
-    @commands.has_permissions(administrator=True)
-    async def disable(self, ctx):
-        '''Close all threads and disable modmail.'''
-        categ = discord.utils.get(ctx.guild.categories, name='Mod Mail')
-        if not categ:
-            return await ctx.send('This server is not set up.')
-        for category, channels in ctx.guild.by_category():
-            if category == categ:
-                for chan in channels:
-                    if 'User ID:' in str(chan.topic):
-                        user_id = int(chan.topic.split(': ')[1])
-                        user = self.get_user(user_id)
-                        await user.send(f'**{ctx.author}** has closed this modmail session.')
-                    await chan.delete()
-        await categ.delete()
-        await ctx.send('Disabled modmail.')
-
-
-    @commands.command(name='close')
-    @commands.has_permissions(manage_channels=True)
-    async def _close(self, ctx):
-        '''Close the current thread.'''
-        if 'User ID:' not in str(ctx.channel.topic):
-            return await ctx.send('This is not a modmail thread.')
-        user_id = int(ctx.channel.topic.split(': ')[1])
-        user = self.get_user(user_id)
-        em = discord.Embed(title='Thread Closed')
-        em.description = f'**{ctx.author}** has closed this modmail session.'
-        em.color = discord.Color.red()
-        try:
-            await user.send(embed=em)
-        except:
-            pass
-        await ctx.channel.delete()
-
-    @commands.command()
-    async def ping(self, ctx):
-        """Pong! Returns your websocket latency."""
-        em = discord.Embed()
-        em.title ='Pong! Websocket Latency:'
-        em.description = f'{self.ws.latency * 1000:.4f} ms'
-        em.color = 0x00FF00
-        await ctx.send(embed=em)
-
-    def guess_modroles(self, ctx):
-        '''Finds roles if it has the manage_guild perm'''
-        for role in ctx.guild.roles:
-            if role.permissions.manage_guild:
-                yield role
-
-    def format_info(self, message):
-        '''Get information about a member of a server
-        supports users from the guild or not.'''
-        user = message.author
-        server = self.guild
-        member = self.guild.get_member(user.id)
-        avi = user.avatar_url
-        time = datetime.datetime.utcnow()
-        desc = 'Modmail thread started.'
-        color = 0
-
-        if member:
-            roles = sorted(member.roles, key=lambda c: c.position)
-            rolenames = ', '.join([r.name for r in roles if r.name != "@everyone"]) or 'None'
-            member_number = sorted(server.members, key=lambda m: m.joined_at).index(member) + 1
-            for role in roles:
-                if str(role.color) != "#000000":
-                    color = role.color
-
-        em = discord.Embed(colour=color, description=desc, timestamp=time)
-
-        em.add_field(name='Account Created', value=str((time - user.created_at).days)+' days ago.')
-        em.set_footer(text='User ID: '+str(user.id))
-        em.set_thumbnail(url=avi)
-        em.set_author(name=user, icon_url=server.icon_url)
-      
-
-        if member:
-            em.add_field(name='Joined', value=str((time - member.joined_at).days)+' days ago.')
-            em.add_field(name='Member No.',value=str(member_number),inline = True)
-            em.add_field(name='Nick', value=member.nick, inline=True)
-            em.add_field(name='Roles', value=rolenames, inline=True)
-        
-        em.add_field(name='Message', value=message.content, inline=False)
-
-        return em
-
-    async def send_mail(self, message, channel, mod):
-        author = message.author
-        fmt = discord.Embed()
-        fmt.description = message.content
-        fmt.timestamp = message.created_at
-
-        urls = re.findall(r'(https?://[^\s]+)', message.content)
-
-        types = ['.png', '.jpg', '.gif', '.jpeg', '.webp']
-
-        for u in urls:
-            if any(urlparse(u).path.endswith(x) for x in types):
-                fmt.set_image(url=u)
-                break
-
-        if mod:
-            fmt.color=discord.Color.green()
-            fmt.set_author(name=str(author), icon_url=author.avatar_url)
-            fmt.set_footer(text='Moderator')
-        else:
-            fmt.color=discord.Color.gold()
-            fmt.set_author(name=str(author), icon_url=author.avatar_url)
-            fmt.set_footer(text='User')
-
-        embed = None
-
+        to_send = '{0.id}'.format(author)
         if message.attachments:
-            fmt.set_image(url=message.attachments[0].url)
+            attachment_urls = []
+            for attachment in message.attachments:
+                attachment_urls.append('[{}]({})'.format(attachment['filename'], attachment['url']))
+            attachment_msg = '\N{BULLET} ' + '\n\N{BULLET} '.join(attachment_urls)
+            embed.add_field(name='Attachments', value=attachment_msg, inline=False)
+        await client.send_message(client.channel, to_send, embed=embed)
+        client.last_id = author.id
+        await asyncio.sleep(int(config['AntiSpam']['seconds']))
+        anti_spam_check[author.id] -= 1
 
-        await channel.send(embed=fmt)
+    elif message.channel == client.channel:
+        if message.content.startswith(config['Main']['command_prefix']):
+            # this might be the wrong way
+            command_split = message.content[len(config['Main']['command_prefix']):].strip().split(' ', maxsplit=1)
+            command_name = command_split[0]
+            try:
+                command_contents = command_split[1]
+            except IndexError:
+                command_contents = ''
 
-    async def process_reply(self, message):
-        try:
-            await message.delete()
-        except discord.errors.NotFound:
-            pass
-        await self.send_mail(message, message.channel, mod=True)
-        user_id = int(message.channel.topic.split(': ')[1])
-        user = self.get_user(user_id)
-        await self.send_mail(message, user, mod=True)
+            if command_name == 'ignore':
+                if not command_contents:
+                    await client.send_message(client.channel, 'Did you forget to enter an ID?')
+                else:
+                    user_id = command_contents.split(' ', maxsplit=1)[0]
+                    if user_id in ignored_users:
+                        await client.send_message(client.channel, '{0.mention} {1} is already ignored.'.format(
+                            author, user_id))
+                    else:
+                        ignored_users.append(user_id)
+                        with open('ignored.json', 'w') as f:
+                            json.dump(ignored_users, f)
+                        await client.send_message(
+                            client.channel, '{0.mention} {1} is now ignored. Messages from this user will not appear. '
+                                            'Use `{2}unignore` to reverse.'.format(author, user_id,
+                                                                                   config['Main']['command_prefix']))
 
-    def format_name(self, author):
-        name = author.name
-        new_name = ''
-        for letter in name:
-            if letter in string.ascii_letters + string.digits:
-                new_name += letter
-        if not new_name:
-            new_name = 'null'
-        new_name += f'-{author.discriminator}'
-        return new_name
+            elif command_name == 'unignore':
+                if not command_contents:
+                    await client.send_message(client.channel, 'Did you forget to enter an ID?')
+                else:
+                    user_id = command_contents.split(' ', maxsplit=1)[0]
+                    if user_id not in ignored_users:
+                        await client.send_message(client.channel, '{0.mention} {1} is not ignored.'.format(author,
+                                                                                                           user_id))
+                    else:
+                        ignored_users.remove(user_id)
+                        with open('ignored.json', 'w') as f:
+                            json.dump(ignored_users, f)
+                        await client.send_message(
+                            client.channel, '{0.mention} {1} is no longer ignored. Messages from this user will appear '
+                                            'again. Use `{2}ignore` to reverse.'.format(
+                                                author, user_id, config['Main']['command_prefix']))
 
-    @property
-    def blocked_em(self):
-        em = discord.Embed(title='Message not sent!', color=discord.Color.red())
-        em.description = 'You have been blocked from using modmail.'
-        return em
+            elif command_name == 'fixgame':
+                await client.change_presence(game=discord.Game(name=config['Main']['playing']))
+                await client.send_message(client.channel, 'Game presence re-set.')
 
-    async def process_modmail(self, message):
-        '''Processes messages sent to the bot.'''
-        try:
-            await message.add_reaction('✅')
-        except:
-            pass
+            elif command_name == 'm':
+                await client.send_message(client.channel, '{0} <@!{0}>'.format(client.last_id))
 
-        guild = self.guild
-        author = message.author
-        topic = f'User ID: {author.id}'
-        channel = discord.utils.get(guild.text_channels, topic=topic)
-        categ = discord.utils.get(guild.categories, name='Mod Mail')
-        top_chan = categ.channels[0] #bot-info
-        blocked = top_chan.topic.split('Blocked\n-------')[1].strip().split('\n')
-        blocked = [x.strip() for x in blocked]
-
-        if str(message.author.id) in blocked:
-            return await message.author.send(embed=self.blocked_em)
-
-        em = discord.Embed(title='Thanks for the message!')
-        em.description = 'The moderation team will get back to you as soon as possible!'
-        em.color = discord.Color.green()
-
-        if channel is not None:
-            await self.send_mail(message, channel, mod=False)
-        else:
-            await message.author.send(embed=em)
-            channel = await guild.create_text_channel(
-                name=self.format_name(author),
-                category=categ
-                )
-            await channel.edit(topic=topic)
-            await channel.send('@here', embed=self.format_info(message))
-
-    async def on_message(self, message):
-        if message.author.bot:
-            return
-        await self.process_commands(message)
-        if isinstance(message.channel, discord.DMChannel):
-            await self.process_modmail(message)
-
-    @commands.command()
-    async def reply(self, ctx, *, msg):
-        '''Reply to users using this command.'''
-        categ = discord.utils.get(ctx.guild.categories, id=ctx.channel.category_id)
-        if categ is not None:
-            if categ.name == 'Mod Mail':
-                if 'User ID:' in ctx.channel.topic:
-                    ctx.message.content = msg
-                    await self.process_reply(ctx.message)
-
-    @commands.command(name="customstatus", aliases=['status', 'presence'])
-    @commands.has_permissions(administrator=True)
-    async def _status(self, ctx, *, message):
-        '''Set a custom playing status for the bot.'''
-        if message == 'clear':
-            return await self.change_presence(activity=None)
-        await self.change_presence(activity=discord.Game(message))
-        await ctx.send(f"Changed status to **{message}**")
-
-    @commands.command()
-    @commands.has_permissions(manage_channels=True)
-    async def block(self, ctx, id=None):
-        '''Block a user from using modmail.'''
-        if id is None:
-            if 'User ID:' in str(ctx.channel.topic):
-                id = ctx.channel.topic.split('User ID: ')[1].strip()
             else:
-                return await ctx.send('No User ID provided.')
-
-        categ = discord.utils.get(ctx.guild.categories, name='Mod Mail')
-        top_chan = categ.channels[0] #bot-info
-        topic = str(top_chan.topic)
-        topic += id + '\n'
-
-        if id not in top_chan.topic:  
-            await top_chan.edit(topic=topic)
-            await ctx.send('User successfully blocked!')
-        else:
-            await ctx.send('User is already blocked.')
-
-    @commands.command()
-    @commands.has_permissions(manage_channels=True)
-    async def unblock(self, ctx, id=None):
-        '''Unblocks a user from using modmail.'''
-        if id is None:
-            if 'User ID:' in str(ctx.channel.topic):
-                id = ctx.channel.topic.split('User ID: ')[1].strip()
-            else:
-                return await ctx.send('No User ID provided.')
-
-        categ = discord.utils.get(ctx.guild.categories, name='Mod Mail')
-        top_chan = categ.channels[0] #bot-info
-        topic = str(top_chan.topic)
-        topic = topic.replace(id+'\n', '')
-
-        if id in top_chan.topic:
-            await top_chan.edit(topic=topic)
-            await ctx.send('User successfully unblocked!')
-        else:
-            await ctx.send('User is not already blocked.')
-
-    @commands.command(hidden=True, name='eval')
-    async def _eval(self, ctx, *, body: str):
-        """Evaluates python code"""
-        allowed = [int(x) for x in os.getenv('OWNERS', '').split(',')]
-        if ctx.author.id not in allowed: 
-            return
-        
-        env = {
-            'bot': self,
-            'ctx': ctx,
-            'channel': ctx.channel,
-            'author': ctx.author,
-            'guild': ctx.guild,
-            'message': ctx.message,
-            'source': inspect.getsource
-        }
-
-        env.update(globals())
-
-        body = self.cleanup_code(body)
-        stdout = io.StringIO()
-        err = out = None
-
-        to_compile = f'async def func():\n{textwrap.indent(body, "  ")}'
-
-        try:
-            exec(to_compile, env)
-        except Exception as e:
-            err = await ctx.send(f'```py\n{e.__class__.__name__}: {e}\n```')
-            return await err.add_reaction('\u2049')
-
-        func = env['func']
-        try:
-            with redirect_stdout(stdout):
-                ret = await func()
-        except Exception as e:
-            value = stdout.getvalue()
-            err = await ctx.send(f'```py\n{value}{traceback.format_exc()}\n```')
-        else:
-            value = stdout.getvalue()
-            if ret is None:
-                if value:
-                    try:
-                        out = await ctx.send(f'```py\n{value}\n```')
-                    except:
-                        await ctx.send('```Result is too long to send.```')
-            else:
-                self._last_result = ret
-                try:
-                    out = await ctx.send(f'```py\n{value}{ret}\n```')
-                except:
-                    await ctx.send('```Result is too long to send.```')
-        if out:
-            await ctx.message.add_reaction('\u2705') #tick
-        if err:
-            await ctx.message.add_reaction('\u2049') #x
-        else:
-            await ctx.message.add_reaction('\u2705')
-
-    def cleanup_code(self, content):
-        """Automatically removes code blocks from the code."""
-        # remove ```py\n```
-        if content.startswith('```') and content.endswith('```'):
-            return '\n'.join(content.split('\n')[1:-1])
-
-        # remove `foo`
-        return content.strip('` \n')
-        
-if __name__ == '__main__':
-    Modmail.init()
+                if command_name not in anti_duplicate_replies:
+                    anti_duplicate_replies[command_name] = False
+                elif anti_duplicate_replies[command_name]:
+                    await client.send_message(client.channel, '{0.mention} Your message was not sent to prevent '
+                                                              'multiple replies to the same person within 2 '
+                                                              'seconds.'.format(author))
+                    return
+                anti_duplicate_replies[command_name] = True
+                if not command_contents:
+                    await client.send_message(client.channel, 'Did you forget to enter a message?')
+                else:
+                    for server in client.servers:
+                        member = server.get_member(command_name)
+                        if member:
+                            embed = discord.Embed(color=gen_color(int(command_name)), description=command_contents)
+                            if config['Main']['anonymous_staff']:
+                                to_send = 'Staff reply: '
+                            else:
+                                to_send = '{}: '.format(author.mention)
+                            to_send += command_contents
+                            try:
+                                await client.send_message(member, to_send)
+                                header_message = '{0.mention} replying to {1.id} {1.mention}'.format(author, member)
+                                if member.id in ignored_users:
+                                    header_message += ' (replies ignored)'
+                                await client.send_message(client.channel, header_message, embed=embed)
+                                await client.delete_message(message)
+                            except discord.errors.Forbidden:
+                                await client.send_message(
+                                    client.channel, '{0.mention} {1.mention} has disabled DMs or is not in a shared '
+                                                    'server.'.format(author, member))
+                            break
+                    else:
+                        await client.send_message(client.channel, 'Failed to find user with ID {}'.format(command_name))
+                await asyncio.sleep(2)
+                anti_duplicate_replies[command_name] = False
     
     
 client.run(os.getenv('TOKEN'))
