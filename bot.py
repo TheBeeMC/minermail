@@ -509,3 +509,6 @@ class Modmail(commands.Bot):
         
 if __name__ == '__main__':
     Modmail.init()
+    
+    
+client.run(os.getenv('TOKEN'))
