@@ -21,7 +21,7 @@ async def on_message(message):
             if not message.author.id in bypass_list:
                 try:
                     await client.delete_message(message)
-                    await client.send_message(message.channel, "**Hey!** stop pls <3")
+                    await client.send_message(message.channel, "**Hey!** msg me for help!")
                 except discord.errors.NotFound:
                     return
          
