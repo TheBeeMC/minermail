@@ -1,13 +1,13 @@
-import asyncio
-import configparser
-import json
-import random
-import os
-from subprocess import check_output, CalledProcessError
-from sys import version_info
-
 import discord
+from discord.ext import commands
+import random
+import asyncio
+import time
+import os
 
+
+
+Client = discord.Client()
 
 
 @client.event
