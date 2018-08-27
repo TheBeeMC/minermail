@@ -220,4 +220,4 @@ async def on_message(message):
                 anti_duplicate_replies[command_name] = False
     
     
-client.run(os.getenv('TOKEN'))
+client.run(config['Main']['token'])
