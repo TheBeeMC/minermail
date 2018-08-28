@@ -6,18 +6,6 @@ import time
 import os
 
 
-Client = discord.Client() #Initialise Client 
-client = commands.Bot(command_prefix = "?") #Initialise client bot
-
-
-@client.event 
-async def on_ready():
-    print("Bot is online and connected to Discord") #This will be called when the bot connects to the server
-
-@client.event
-async def on_message(message):
-    if message.content == "cookie":
-        await client.send_message(message.channel, ":cookie:") #responds with Cookie emoji when someone says "cookie"
         
 
  @client.event
@@ -25,7 +13,7 @@ async def on_ready():
       await client.change_presence(activity=discord.Game(name="Create a ticket for help!!"))            
             
             
-client.loop.create_task(tutorial_uptime())
+
 client.run(os.getenv('TOKEN'))           
             
                        
