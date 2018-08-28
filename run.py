@@ -5,7 +5,7 @@ import asyncio
 import time
 import os
 
-
+Client = discord.Client()
        
  @client.event
 async def on_ready():
