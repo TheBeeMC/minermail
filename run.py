@@ -7,7 +7,7 @@ import os
 
 Client = discord.Client()
        
- @client.event
+@client.event
 async def on_ready():
       await client.change_presence(game=discord.Game(name="Create a ticket for help!!"))            
             
