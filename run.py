@@ -10,7 +10,7 @@ Client = discord.Client()
 
 client = commands.Bot(command_prefix = "?")
 
-chat_filter = ["LOL", "LMAO"]
+chat_filter = ["Hi", "Hello"]
 bypass_list = []
 
 @client.event
@@ -20,8 +20,7 @@ async def on_message(message):
         if word.upper() in chat_filter:
             if not message.author.id in bypass_list:
                 try:
-                    await client.delete_message(message)
-                    await client.send_message(message.channel, "What is so funny?")
+                    await client.send_message(message.channel, "Hi, What is up? I am just a bot. If you have any questions pm me and it will be send to the owner's")
                 except discord.errors.NotFound:
                     return
          
@@ -29,7 +28,7 @@ async def on_message(message):
                                  
 @client.event
 async def on_ready():
-      await client.change_presence(activity=discord.Game(name="Loading Miner..."))
+      await client.change_presence(activity=discord.Game(name="Maybe sleeping or just doing something else if not I am coding"))
         
         
         
