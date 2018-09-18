@@ -35,6 +35,6 @@ async def on_ready():
                     
 
 
-client.run(os.getenv('TOKEN'))
+
             
                        
